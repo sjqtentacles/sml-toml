@@ -1,0 +1,18 @@
+(* MLton basis file for the sml-parsec library.
+ * Brings `structure CharParsec` (and the `ParsecFn` functor + `CharStream`
+ * instance) into scope. Sources are listed in dependency order. *)
+local
+  $(SML_LIB)/basis/basis.mlb
+in
+  stream.sig
+  parsec.sig
+  parsecfn.sml
+  charstream.sml
+  charparseccore.sml
+  charparsec.sig
+  charparsec.sml
+  expr.sig
+  exprfn.sml
+  charexpr.sml
+  tokenstream.sml
+end

@@ -1,0 +1,6 @@
+(* Public MLB entry point for the sml-toml library. Consumers reference this
+   file; it simply re-exports the dependency-ordered sources. The vendored
+   sml-parsec sources come first (via sources.mlb), so a consumer may
+   `open CharParsec` alongside `Toml`. *)
+
+sources.mlb

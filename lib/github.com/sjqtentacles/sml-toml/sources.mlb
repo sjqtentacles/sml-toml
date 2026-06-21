@@ -1,0 +1,11 @@
+(* Source files for sml-toml, in dependency order. Pulls in the vendored
+   sml-parsec combinator library (its canonical parsec.mlb, whose Basis
+   include is `local`-wrapped so there is no duplicate-basis conflict) and
+   then the TOML signature + implementation it builds on. *)
+
+$(SML_LIB)/basis/basis.mlb
+
+../sml-parsec/parsec.mlb
+
+toml.sig
+toml.sml
