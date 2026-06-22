@@ -34,6 +34,11 @@ struct
                                ka = kb andalso valEq (va, vb)) (a, b)
     | valEq _ = false
 
+  (* `toString` then re-`parse` should recover an equal value. We pass values
+     already in canonical order (non-tables sorted first, then tables sorted)
+     so the order-sensitive `valEq` matches the canonicalizing serializer. *)
+  fun roundTrips v = valEq (v, parseOk (toString v))
+
   fun run () =
     let
       val () = section "scalars"
@@ -201,6 +206,76 @@ struct
         (true, valEq (field rf "servers",
                       Array [ Table [("name", Str "alpha")],
                               Table [("name", Str "beta")] ]))
+
+      val () = section "serializer: exact output"
+
+      (* A small document serializes to exactly this TOML (non-table pairs
+         first, then `[header]` sections; keys sorted ascending). *)
+      val () = checkString "exact serialized document"
+        ("title = \"TOML\"\n\n[owner]\nname = \"Tom\"\n",
+         toString (Table [("title", Str "TOML"),
+                          ("owner", Table [("name", Str "Tom")])]))
+
+      (* Empty table -> empty document, which re-parses to an empty table. *)
+      val () = checkString "empty table serializes empty" ("", toString (Table []))
+
+      val () = section "serializer: round-trips"
+
+      val () = checkBool "round-trip scalars"
+        (true, roundTrips (Table [("a", Int 1), ("b", Bool true),
+                                  ("c", Str "hi")]))
+      val () = checkBool "round-trip negative integer"
+        (true, roundTrips (Table [("n", Int ~7)]))
+      val () = checkBool "round-trip array"
+        (true, roundTrips (Table [("xs", Array [Int 1, Int 2, Int 3])]))
+      val () = checkBool "round-trip empty array and empty table"
+        (true, roundTrips (Table [("a", Array []), ("z", Table [])]))
+      val () = checkBool "round-trip header + nested table"
+        (true, roundTrips (Table [("title", Str "TOML"),
+                                  ("owner", Table [("name", Str "Tom")])]))
+      val () = checkBool "round-trip deeply nested tables"
+        (true, roundTrips (Table [("pkg",
+                  Table [("dep",
+                    Table [("name", Str "x"), ("ver", Str "1.0")])])]))
+      val () = checkBool "round-trip array of tables (inline)"
+        (true, roundTrips (Table [("servers",
+                  Array [Table [("name", Str "alpha")],
+                         Table [("name", Str "beta")]])]))
+      val () = checkBool "round-trip datetime lexeme"
+        (true, roundTrips (Table [("d", Datetime "1979-05-27T07:32:00Z")]))
+      val () = checkBool "round-trip quoted (non-bare) key"
+        (true, roundTrips (Table [("ns.key", Int 1)]))
+
+      (* Serializing then parsing is idempotent (stable) even when the source
+         document lists keys in a non-canonical, mixed order. *)
+      val () = checkString "serialization is idempotent on the fixture"
+        (toString (parseOk fixture),
+         toString (parseOk (toString (parseOk fixture))))
+      val () = checkBool "fixture re-serialization re-parses"
+        (true, case parse (toString (parseOk fixture)) of
+                   Ok _ => true | Err _ => false)
+
+      val () = section "serializer: floats and escaping"
+
+      (* Floats always carry a decimal point and use "-" (never "~"). *)
+      val fNeg = toString (Table [("x", Float ~2.5)])
+      val () = checkString "negative float exact" ("x = -2.5\n", fNeg)
+      val () = checkBool "float keeps a decimal point"
+        (true, String.isSubstring "." fNeg)
+      val () = checkBool "float never emits a tilde"
+        (true, not (String.isSubstring "~" fNeg))
+      val () = checkBool "round-trip floats"
+        (true, roundTrips (Table [("a", Float 0.75), ("b", Float 3.14),
+                                  ("c", Float ~2.5), ("d", Float 1000.0)]))
+
+      (* A string with a quote and a newline escapes correctly and round-trips. *)
+      val esc = Table [("s", Str "he said \"hi\"\nbye")]
+      val escOut = toString esc
+      val () = checkBool "escaped string round-trips" (true, roundTrips esc)
+      val () = checkBool "output escapes the quote"
+        (true, String.isSubstring "\\\"" escOut)
+      val () = checkBool "output escapes the newline"
+        (true, String.isSubstring "\\n" escOut)
     in
       ()
     end

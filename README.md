@@ -2,9 +2,10 @@
 
 [![CI](https://github.com/sjqtentacles/sml-toml/actions/workflows/ci.yml/badge.svg)](https://github.com/sjqtentacles/sml-toml/actions/workflows/ci.yml)
 
-A TOML parser for Standard ML, covering a useful subset of
+A TOML parser **and serializer** for Standard ML, covering a useful subset of
 [TOML v1.0.0](https://toml.io/en/v1.0.0). It turns a configuration document
-into a tree of `value`s rooted at a `Table`.
+into a tree of `value`s rooted at a `Table`, and turns that tree back into
+deterministic TOML text with `toString` / `encode`.
 
 Built on [`sml-parsec`](https://github.com/sjqtentacles/sml-parsec) (vendored
 under `lib/`), a parser-combinator library. Pure Standard ML over the Basis
@@ -26,12 +27,20 @@ datatype value =
 
 datatype ('ok, 'err) result = Ok of 'ok | Err of 'err
 
-val parse : string -> (value, string) result
+val parse    : string -> (value, string) result
+val toString : value -> string
+val encode   : value -> string   (* synonym for toString *)
 ```
 
 `parse` returns `Ok (Table ...)` on success — the root table, with top-level
 keys in source order — or `Err msg` with a one-line message on a syntax error
 or a semantic error such as a duplicate key.
+
+`toString` (and its synonym `encode`) is the inverse: it renders a `value` back
+to TOML text. Output is **deterministic** — keys are sorted ascending and reals
+use a forced-decimal formatter — so the same tree always serializes to the same
+bytes on both MLton and Poly/ML. For everything the parser accepts,
+`parse (toString v)` round-trips back to a value equal to `v`.
 
 ### Example
 
@@ -46,6 +55,43 @@ val Toml.Ok (Toml.Table root) = Toml.parse src
             Table [("host",  Str "localhost"),
                    ("ports", Array [Int 8000, Int 8001])])] *)
 ```
+
+### Serializing
+
+```sml
+open Toml
+
+val doc = Table [("title", Str "TOML"),
+                 ("owner", Table [("name", Str "Tom")])]
+
+val out = toString doc
+(* out =
+   "title = \"TOML\"\n\
+   \\n\
+   \[owner]\n\
+   \name = \"Tom\"\n" *)
+```
+
+That is, `toString doc` produces exactly:
+
+```toml
+title = "TOML"
+
+[owner]
+name = "Tom"
+```
+
+Non-table pairs are emitted first as `key = value` lines (keys sorted
+ascending), then each nested table as a `[dotted.header]` section. Strings are
+basic strings with `"`, `\`, and control characters escaped; integers and
+floats print negatives with a leading `-` (never SML's `~`), and floats always
+carry a decimal point. Arrays — including arrays of tables — are rendered inline
+(`[1, 2]`, `[{ name = "a" }]`), which the parser reads back to the identical
+tree. Bare keys are emitted unquoted; keys that are empty or contain anything
+outside `[A-Za-z0-9_-]` are quoted.
+
+> `inf`/`nan` floats are serialized as `inf`/`-inf`/`nan` for completeness, but
+> they fall outside the parser's subset and so do not round-trip.
 
 ## Supported subset
 
@@ -104,10 +150,13 @@ no network.
 
 ## Tests
 
-46 deterministic checks across scalars, comments/blank lines, dotted keys and
+66 deterministic checks across scalars, comments/blank lines, dotted keys and
 `[table]`/`[a.b]` nesting, arrays and `[[array of tables]]`, inline tables,
 string escapes and literal strings, duplicate-key rejection, verbatim
-date-time capture, and a realistic multi-section fixture. Run `make all-tests`.
+date-time capture, a realistic multi-section fixture, and the `toString`
+serializer (exact-output vector, round-trips for nested tables / arrays /
+floats / escaped strings, serialization idempotence, and forced-decimal float
+formatting). Run `make all-tests`.
 
 ## License
 

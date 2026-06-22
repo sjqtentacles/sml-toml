@@ -465,4 +465,124 @@ struct
          | CharParsec.Ok ds => resOk (build ds))
       handle Toml msg => resErr msg
   end
+
+  (* ---- serialization (additive; the inverse of `parse`) ------------------
+
+     A `value` is rendered back to TOML text. The root table's non-table pairs
+     are emitted first as `key = value` lines (keys sorted ascending), then
+     each nested table as a `[dotted.header]` section (also sorted), sections
+     separated by a single blank line. Arrays — including arrays whose elements
+     are tables — are rendered inline (`[1, 2]`, `[{ name = "a" }]`); the
+     parser reads those back to the same AST, so round-trips hold without
+     needing `[[array-of-tables]]` headers. Floats use a forced-decimal
+     formatter that always shows a decimal point and a leading "-" (never
+     SML's "~"), so both compilers emit byte-identical text. *)
+  local
+    fun isBare k =
+      size k > 0 andalso
+      List.all (fn c => Char.isAlphaNum c orelse c = #"_" orelse c = #"-")
+               (explode k)
+
+    fun hex4 n =
+      let
+        fun pad s = if size s >= 4 then s else pad ("0" ^ s)
+      in pad (Int.fmt StringCvt.HEX n) end
+
+    fun escChar c =
+      case c of
+          #"\"" => "\\\""
+        | #"\\" => "\\\\"
+        | #"\n" => "\\n"
+        | #"\t" => "\\t"
+        | #"\r" => "\\r"
+        | #"\b" => "\\b"
+        | #"\f" => "\\f"
+        | _ => if Char.ord c < 0x20 then "\\u" ^ hex4 (Char.ord c)
+               else String.str c
+
+    fun quoted s = "\"" ^ String.concat (List.map escChar (explode s)) ^ "\""
+
+    fun keyStr k = if isBare k then k else quoted k
+
+    fun pathStr ks = String.concatWith "." (List.map keyStr ks)
+
+    (* Integer text with a leading "-" rather than SML's "~". *)
+    fun intStr n =
+      let val s = Int.toString n
+      in if String.isPrefix "~" s then "-" ^ String.extract (s, 1, NONE) else s end
+
+    (* Forced-decimal real: always a '.', '-' not '~', trailing fractional
+       zeros trimmed to a single digit; inf/nan handled explicitly. *)
+    fun realStr r =
+      if not (Real.isFinite r) then
+        (if Real.isNan r then "nan" else if r < 0.0 then "-inf" else "inf")
+      else
+        let
+          val s0 = Real.fmt (StringCvt.FIX (SOME 6)) r
+          val s1 = if String.isPrefix "~" s0
+                   then "-" ^ String.extract (s0, 1, NONE) else s0
+          fun dropZeros (#"0" :: rest) = dropZeros rest
+            | dropZeros (#"." :: rest) = #"0" :: #"." :: rest
+            | dropZeros cs = cs
+        in
+          if List.exists (fn c => c = #".") (explode s1)
+          then implode (List.rev (dropZeros (List.rev (explode s1))))
+          else s1
+        end
+
+    (* Stable ascending sort by key (small inputs; insertion sort). *)
+    fun sortKvs kvs =
+      let
+        fun ins (kv, []) = [kv]
+          | ins ((k, v), (k2, v2) :: rest) =
+              if String.compare (k, k2) = GREATER
+              then (k2, v2) :: ins ((k, v), rest)
+              else (k, v) :: (k2, v2) :: rest
+      in List.foldr (fn (kv, acc) => ins (kv, acc)) [] kvs end
+
+    fun isTable (_, Table _) = true
+      | isTable _ = false
+
+    (* Inline rendering: scalars, arrays, and tables-inside-arrays. *)
+    fun inline (Str s)      = quoted s
+      | inline (Int n)      = intStr n
+      | inline (Float r)    = realStr r
+      | inline (Bool b)     = if b then "true" else "false"
+      | inline (Datetime d) = d
+      | inline (Array xs)   = "[" ^ String.concatWith ", " (List.map inline xs) ^ "]"
+      | inline (Table kvs)  =
+          if null kvs then "{}"
+          else "{ " ^ String.concatWith ", "
+                        (List.map (fn (k, v) => keyStr k ^ " = " ^ inline v)
+                                  (sortKvs kvs)) ^ " }"
+
+    (* Lines for the body of the table at `path` (no header for this level):
+       sorted scalar/array pairs, then a `[header]`-prefixed block per nested
+       table, sections separated by a single blank line. *)
+    fun bodyLines (path, kvs) =
+      let
+        val nonT = sortKvs (List.filter (fn p => not (isTable p)) kvs)
+        val tbls = sortKvs (List.filter isTable kvs)
+        val scalarSec = List.map (fn (k, v) => keyStr k ^ " = " ^ inline v) nonT
+        val tableSecs =
+          List.map (fn (k, Table sub) =>
+                        ("[" ^ pathStr (path @ [k]) ^ "]") :: bodyLines (path @ [k], sub)
+                     | _ => raise Toml "unreachable: non-table in table section")
+                   tbls
+        val secs = (if null scalarSec then [] else [scalarSec]) @ tableSecs
+        fun join [] = []
+          | join [s] = s
+          | join (s :: rest) = s @ ("" :: join rest)
+      in
+        join secs
+      end
+  in
+    fun toString (Table kvs) =
+          (case bodyLines ([], kvs) of
+               [] => ""
+             | ls => String.concatWith "\n" ls ^ "\n")
+      | toString v = inline v ^ "\n"
+
+    val encode = toString
+  end
 end
