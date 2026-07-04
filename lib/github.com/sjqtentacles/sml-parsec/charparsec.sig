@@ -105,7 +105,13 @@ sig
   val semiSep   : 'a parser -> 'a list parser
   val semiSep1  : 'a parser -> 'a list parser
 
-  (* Parse a (possibly signed) integer. *)
+  (* Parse a (possibly signed) arbitrary-precision integer. Never overflows and
+     parses identically under MLton and Poly/ML -- prefer this for any input
+     that may exceed the host `Int` range. *)
+  val integerInf : IntInf.int parser
+  (* Parse a (possibly signed) machine-`int` integer. Convenience over
+     `integerInf`; its range is the host compiler's `Int`, so an out-of-range
+     literal fails the parse (returns `Err`) rather than raising `Overflow`. *)
   val integer : int parser
 
   (* Full-input parse driver: skip leading whitespace, run `p`, require eof.

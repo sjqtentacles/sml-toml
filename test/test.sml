@@ -61,6 +61,14 @@ struct
         (true, valEq (field (parseOk "b = false") "b", Bool false))
       val () = checkBool "underscores in integer"
         (true, valEq (field (parseOk "n = 1_000") "n", Int 1000))
+      (* TOML integers are 64-bit; parsed as arbitrary-precision IntInf so they
+         are lossless and identical on MLton (32-bit int) and Poly/ML (63-bit) --
+         the old `Int.fromString` raised Overflow under MLton past 2^31. *)
+      val () = checkBool "large integer past 2^31 parses losslessly"
+        (true, valEq (field (parseOk "n = 1700000000000") "n", Int 1700000000000))
+      val () = checkBool "max 64-bit TOML integer parses losslessly"
+        (true, valEq (field (parseOk "n = 9223372036854775807") "n",
+                      Int (valOf (IntInf.fromString "9223372036854775807"))))
 
       val () = section "comments and blank lines"
 

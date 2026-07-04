@@ -4,7 +4,7 @@ structure Toml :> TOML =
 struct
   datatype value =
       Str      of string
-    | Int      of int
+    | Int      of IntInf.int              (* TOML integers are 64-bit; arbitrary precision here *)
     | Float    of real
     | Bool     of bool
     | Datetime of string
@@ -204,9 +204,13 @@ struct
               in
                 case (fp, ep) of
                     (NONE, NONE) =>
-                      (case Int.fromString (sg ^ ip) of
+                      (* TOML integers are 64-bit; parse via `IntInf` (never
+                         overflows) so a large valid integer is lossless and
+                         identical on MLton (32-bit `int`) and Poly/ML (63-bit)
+                         instead of raising `Overflow`. *)
+                      (case IntInf.fromString (sg ^ ip) of
                            SOME n => return (Int n)
-                         | NONE => fail "integer out of range")
+                         | NONE => fail "malformed integer")
                   | _ =>
                       (case Real.fromString (sg ^ ip ^ fps ^ eps) of
                            SOME r => return (Float r)
@@ -508,7 +512,7 @@ struct
 
     (* Integer text with a leading "-" rather than SML's "~". *)
     fun intStr n =
-      let val s = Int.toString n
+      let val s = IntInf.toString n
       in if String.isPrefix "~" s then "-" ^ String.extract (s, 1, NONE) else s end
 
     (* Forced-decimal real: always a '.', '-' not '~', trailing fractional

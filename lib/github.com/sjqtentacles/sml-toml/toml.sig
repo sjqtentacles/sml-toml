@@ -24,7 +24,7 @@ signature TOML =
 sig
   datatype value =
       Str      of string
-    | Int      of int
+    | Int      of IntInf.int              (* TOML integers are 64-bit; arbitrary precision here *)
     | Float    of real
     | Bool     of bool
     | Datetime of string                 (* raw RFC-3339-ish lexeme, uninterpreted *)

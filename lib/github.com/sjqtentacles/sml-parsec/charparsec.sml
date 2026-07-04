@@ -60,17 +60,36 @@ struct
   (* Deprecated alias kept for backward compatibility. *)
   fun token p = lexeme p
 
-  val integer =
+  (* Parse a (possibly signed) arbitrary-precision integer. `IntInf.fromString`
+     is exact, so this never overflows and yields the same value under MLton and
+     Poly/ML, whose default `int` types are fixed-width (32-bit and 63-bit here)
+     -- preserving cross-compiler determinism. The `NONE` arm is unreachable
+     (`many1 digit` guarantees a non-empty digit run) but is handled totally so
+     no unchecked `valOf` sits on the parse path. *)
+  val integerInf =
       let
-        val sign = (char #"~" >> return ~1)
-                   <|> (char #"-" >> return ~1)
-                   <|> return 1
+        val sign = (char #"~" >> return (~1 : IntInf.int))
+                   <|> (char #"-" >> return (~1 : IntInf.int))
+                   <|> return (1 : IntInf.int)
         val digits = many1 digit
       in
         sign >>= (fn sgn =>
           digits >>= (fn ds =>
-            return (sgn * (valOf (Int.fromString (implode ds))))))
+            case IntInf.fromString (implode ds) of
+                SOME n => return (sgn * n)
+              | NONE => fail "invalid integer literal"))
       end
+
+  (* Signed machine-`int` integer: a backward-compatible convenience over
+     `integerInf`. Its range is the host compiler's `Int` (compiler-dependent),
+     so an out-of-range literal FAILS the parse (a normal `Err`) rather than
+     raising an uncaught `Overflow`. For portable, lossless parsing of large
+     integers use `integerInf`. *)
+  val integer =
+      integerInf >>= (fn n =>
+        case (SOME (IntInf.toInt n) handle Overflow => NONE) of
+            SOME i => return i
+          | NONE => fail "integer literal out of range for this compiler's int")
 
   (* ---- lexer / token kit ---- *)
 
