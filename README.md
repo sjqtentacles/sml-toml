@@ -136,6 +136,45 @@ make all-tests   # both
 make clean
 ```
 
+## Example
+
+`make example` builds and runs [`examples/demo.sml`](examples/demo.sml), which
+parses a small TOML document, looks up nested fields and an
+array-of-tables, then serializes it back out (output is byte-identical
+under MLton and Poly/ML):
+
+```
+=== sml-toml demo ===
+
+-- top-level lookups --
+  title    = sml-toml demo
+  version  = 3
+  ratio    = 0.333333
+
+
+-- nested table lookup: server.tls.cert --
+  server.pem
+
+-- array-of-tables: endpoint --
+  /health
+  /users
+
+-- re-serialized (sorted keys, forced-decimal floats) --
+enabled = true
+endpoint = [{ methods = ["GET"], path = "/health" }, { methods = ["GET", "POST"], path = "/users" }]
+ratio = 0.333333
+tags = ["parser", "toml", "sml"]
+title = "sml-toml demo"
+version = 3
+
+[server]
+host = "localhost"
+port = 8080
+
+[server.tls]
+cert = "server.pem"
+```
+
 ## Installing with smlpkg
 
 ```sh
