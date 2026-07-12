@@ -284,6 +284,126 @@ struct
         (true, String.isSubstring "\\\"" escOut)
       val () = checkBool "output escapes the newline"
         (true, String.isSubstring "\\n" escOut)
+
+      val () = section "sml-check properties"
+
+      (* ---- Generators ---------------------------------------------------- *)
+
+      (* Bare-key-safe identifiers (lowercase ASCII only) for table keys, so
+         we never need to test the quoted-key path here (already covered by
+         the fixed "round-trip quoted (non-bare) key" case above). *)
+      val genKey = Check.map String.implode (Check.nonEmptyListOf (Check.charRange (#"a", #"z")))
+
+      (* String leaves exercise the full printable-ASCII range, including
+         the quote and backslash characters the serializer must escape. *)
+      val genStrVal = Check.map Str (Check.stringOf (Check.charRange (Char.chr 32, Char.chr 126)))
+      (* Ints are kept within MLton's 31-bit default `int` bound before
+         lifting to IntInf, since Check.choose operates on native `int`. *)
+      val genIntVal = Check.map (fn n => Int (IntInf.fromInt n)) (Check.choose (~1000000000, 1000000000))
+      val genBoolVal = Check.map Bool Check.bool
+      (* Floats are deliberately excluded: TOML float serialization is a
+         real-number rendering concern (Real.toString-adjacent) that risks
+         MLton/Poly-ML divergence, orthogonal to what these properties test. *)
+      val genLeaf = Check.oneof [genStrVal, genIntVal, genBoolVal]
+
+      (* Drop later duplicate keys so every generated table has unique keys
+         (TOML rejects a duplicate key with `Err`; see "duplicate keys"
+         above), keeping first-seen order. *)
+      fun dedupKeys pairs =
+        let
+          fun loop ([], _, acc) = List.rev acc
+            | loop ((k, v) :: rest, seen, acc) =
+                if List.exists (fn k' => k' = k) seen
+                then loop (rest, seen, acc)
+                else loop (rest, k :: seen, (k, v) :: acc)
+        in
+          loop (pairs, [], [])
+        end
+
+      (* `toString` canonicalizes a table's pairs: non-table (scalar) pairs
+         first sorted ascending by key, then nested-table pairs sorted
+         ascending by key (toml.sml's `sortKvs` + partition-by-isTable).
+         `valEq`/`roundTrips` above compare tables POSITIONALLY, so a
+         generated table whose pairs aren't already in that canonical order
+         would legitimately fail the round-trip check even though its
+         *content* survives -- the mismatch is in this test's equality, not
+         the library. Reorder generated pairs into the same canonical shape
+         up front so the positional comparison lines up. *)
+      fun isTableVal (Table _) = true
+        | isTableVal _ = false
+      fun insSort leq [] = []
+        | insSort leq (x :: xs) =
+            let
+              fun ins (y, []) = [y]
+                | ins (y, z :: zs) = if leq (y, z) then y :: z :: zs else z :: ins (y, zs)
+            in
+              ins (x, insSort leq xs)
+            end
+      fun keyLeq ((k1, _), (k2, _)) = String.compare (k1, k2) <> GREATER
+      fun canonicalize pairs =
+        let
+          val deduped = dedupKeys pairs
+          val nonT = List.filter (fn (_, v) => not (isTableVal v)) deduped
+          val tbls = List.filter (fn (_, v) => isTableVal v) deduped
+        in
+          insSort keyLeq nonT @ insSort keyLeq tbls
+        end
+
+      (* A recursive `value` generator: leaves at depth 0, optionally a
+         nested Table (with unique, canonically-ordered keys) at greater
+         depth. Check.sized caps the recursion at depth 2 so generated
+         documents stay small. *)
+      fun genPairsAt d =
+        Check.map canonicalize (Check.listOf (Check.tuple2 (genKey, genValueAt d)))
+      and genValueAt 0 = genLeaf
+        | genValueAt d = Check.oneof [genLeaf, Check.map Table (genPairsAt (d - 1))]
+      val genDoc = Check.sized (fn n => Check.map Table (genPairsAt (Int.min (n, 2))))
+
+      fun showVal v = toString (Table [("_", v)])
+
+      (* ---- Properties ------------------------------------------------------ *)
+
+      (* prop: a generated document (str/int/bool leaves, nested tables up to
+         depth 2, unique keys) survives toString -> parse unchanged. *)
+      val () =
+        Harness.check "prop: roundTrips generated document"
+          (case Check.quickCheck (Check.forAll genDoc showVal roundTrips) of
+               Check.Passed _ => true
+             | Check.Failed _ => false)
+
+      (* prop: serialization is idempotent -- reparsing and re-rendering a
+         generated document reproduces exactly the same text (mirrors the
+         fixed "serialization is idempotent on the fixture" case above). *)
+      val () =
+        Harness.check "prop: toString (parseOk (toString v)) = toString v"
+          (case Check.quickCheck
+                  (Check.forAll genDoc showVal
+                     (fn v => toString (parseOk (toString v)) = toString v)) of
+               Check.Passed _ => true
+             | Check.Failed _ => false)
+
+      (* prop: a single string value, isolated from the rest of the document
+         shape, round-trips for any printable-ASCII content -- pins down the
+         quote/backslash escaping path specifically. *)
+      val () =
+        Harness.check "prop: string value round-trips (escaping)"
+          (case Check.quickCheck
+                  (Check.forAll genStrVal showVal
+                     (fn s => roundTrips (Table [("s", s)]))) of
+               Check.Passed _ => true
+             | Check.Failed _ => false)
+
+      (* prop: the parser never raises on arbitrary noisy input -- it always
+         returns a `result`, even for garbage that isn't valid TOML. *)
+      val genNoise = Check.stringOf (Check.charRange (Char.chr 32, Char.chr 126))
+      val () =
+        Harness.check "prop: parse never raises on arbitrary input"
+          (case Check.quickCheck
+                  (Check.forAll genNoise (fn s => s)
+                     (fn s => (case parse s of Ok _ => true | Err _ => true)
+                              handle _ => false)) of
+               Check.Passed _ => true
+             | Check.Failed _ => false)
     in
       ()
     end

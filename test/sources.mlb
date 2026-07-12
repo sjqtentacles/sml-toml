@@ -1,4 +1,18 @@
+(* sml-check is a TEST-only dependency: the library itself depends only on
+   sml-parsec (see ../lib/.../sml-toml/sources.mlb), and only the
+   property-test section needs sml-check. Include order for the flat
+   Poly/ML `use` model (tools/polybuild): sml-prng -> sml-test (check.sig
+   references Test.test in its toTest bridge) -> sml-check -> our own
+   Harness -> the library under test -> the suite + entry/main shims. *)
+
 $(SML_LIB)/basis/basis.mlb
+
+../lib/github.com/sjqtentacles/sml-prng/prng.sig
+../lib/github.com/sjqtentacles/sml-prng/prng.sml
+../lib/github.com/sjqtentacles/sml-test/test.sig
+../lib/github.com/sjqtentacles/sml-test/test.sml
+../lib/github.com/sjqtentacles/sml-check/check.sig
+../lib/github.com/sjqtentacles/sml-check/check.sml
 
 ../lib/github.com/sjqtentacles/sml-toml/sources.mlb
 
